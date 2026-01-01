@@ -18,19 +18,16 @@ class FaissVectorStore(VectorStore):
     Uses 'sentence-transformers/all-MiniLM-L6-v2' for real embeddings.
     """
     def __init__(self, embedding_dim: int = 384): # 384 is dimension for all-MiniLM-L6-v2
-        # Lazy load dependencies to support CI environment without FAISS (Trigger: 2026-01-01T16:11)
         try:
             import faiss
             from sentence_transformers import SentenceTransformer
-        except ImportError as e:
-            print(f"[WARN] FAISS or SentenceTransformer not installed: {e}")
+            self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
+            self.index = faiss.IndexFlatL2(embedding_dim)
+        except Exception as e:
+            print(f"[WARN] VectorStore Init Failed (Missing dependencies or Network error): {e}")
             self.index = None
             self.encoder = None
             return
-
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        self.embedding_dim = embedding_dim
-        self.index = faiss.IndexFlatL2(embedding_dim)
         
         self.documents = [] # Metadata store
         
