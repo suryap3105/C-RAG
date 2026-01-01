@@ -9,6 +9,46 @@ class DatasetLoader:
     def load(self) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
+class SQuADLoader(DatasetLoader):
+    """
+    Loader for SQuAD dataset (JSON format).
+    """
+    def __init__(self, path: str = "data/squad_train_v2.json"):
+        self.path = path
+
+    def load(self) -> List[Dict[str, Any]]:
+        if not os.path.exists(self.path):
+            print(f"[WARN] Data file not found: {self.path}")
+            return []
+            
+        with open(self.path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        standardized = []
+        idx = 0
+        for article in data.get('data', []):
+            for paragraph in article.get('paragraphs', []):
+                context = paragraph.get('context', '')
+                for qa in paragraph.get('qas', []):
+                    qid = qa.get('id', f"SQuAD.{idx}")
+                    question = qa.get('question', '')
+                    
+                    # Extract answers
+                    answers = []
+                    if not qa.get('is_impossible', False):
+                        for ans in qa.get('answers', []):
+                            answers.append(ans['text'])
+                    
+                    standardized.append({
+                        "id": qid,
+                        "query": question,
+                        "answers": answers if answers else [""],
+                        "context": context[:500],
+                        "gold_entities": []
+                    })
+                    idx += 1
+        return standardized
+
 class WebQSPLoader(DatasetLoader):
     """
     Loader for WebQSP dataset.
