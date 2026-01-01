@@ -46,7 +46,7 @@ class LocalKnowledgeGraph(KnowledgeGraph):
             
         return neighbors
 
-    def search_nodes(self, query: str) -> List[Dict[str, Any]]:
+    def search_node(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
         Simple exact/partial match search.
         In real apps, use vector index for this.
@@ -64,5 +64,13 @@ class LocalKnowledgeGraph(KnowledgeGraph):
                     "description": "Local Entity"
                 })
                 count += 1
-                if count >= 10: break
+                if count >= limit: break
         return results
+
+    def get_node_properties(self, node_id: str) -> Dict[str, Any]:
+        """
+        Get properties for a local node.
+        """
+        if node_id not in self.graph:
+            return {}
+        return self.graph.nodes[node_id]
