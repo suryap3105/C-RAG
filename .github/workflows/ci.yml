@@ -1,0 +1,46 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Install Dependencies
+      run: poetry install --no-interaction --no-root
+
+    - name: Lint with flake8
+      run: |
+        poetry run pip install flake8
+        # stop the build if there are Python syntax errors or undefined names
+        poetry run flake8 src --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        poetry run flake8 src --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Run Unit & Component Tests
+      run: |
+        poetry run pytest tests/unit tests/component
+
+    - name: Build Docker Image (Dry Run)
+      run: docker build . --file deploy/Dockerfile -t crag-api:test

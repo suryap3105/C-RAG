@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# OS Artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+__MACOSX/
+
+# Project Logs & Data
+runs/
+data/
+!data/README.md
+!data/.gitkeep
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
