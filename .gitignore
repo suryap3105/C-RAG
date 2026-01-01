@@ -19,8 +19,8 @@ Thumbs.db
 __MACOSX/
 
 # Project Logs & Data
-runs/
-data/
+/runs/
+/data/
 !data/README.md
 !data/.gitkeep
 

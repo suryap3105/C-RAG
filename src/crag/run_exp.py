@@ -68,12 +68,16 @@ def main():
     
     # Try to load pre-built vectorstore
     dataset_name = cfg.get('dataset', 'metaqa')
-    vectorstore_path = f"data/{dataset_name}/vectorstore"
+    # Allow override from config
+    vectorstore_path = cfg.get('retrieval', {}).get('vectorstore_path')
+    if not vectorstore_path:
+        vectorstore_path = f"data/{dataset_name}/vectorstore"
+    
     if os.path.exists(vectorstore_path):
         vs.load(vectorstore_path)
     else:
         print(f"[WARN] No vectorstore found at {vectorstore_path}")
-        print(f"[WARN] Run: python scripts/build_vectorstore.py --dataset {dataset_name}")
+        print(f"[WARN] System will rely on KG Keyword Search fallback if available.")
     
     
     # Retrieval Module
