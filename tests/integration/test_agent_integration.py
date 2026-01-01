@@ -30,8 +30,8 @@ def test_agent_reasoning_loop():
     
     result = agent.solve("Query")
     
-    assert result["answer"] == "The Answer"
-    assert len(result["path"]) >= 2 # At least initial + 1 expansion
+    assert result.final_answer == "The Answer"
+    assert len(result.path) >= 2 # At least initial + 1 expansion
     # Verify interactions
     mock_hrm.retrieve_initial_candidates.assert_called()
     mock_hrm.expand_candidates.assert_called()
