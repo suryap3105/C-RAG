@@ -55,7 +55,15 @@ def main():
         llm = OllamaClient(model_name=model_name, base_url=base_url)
         
     # KG & Vector Store
-    kg = WikidataKG()
+    kg_path = cfg.get('retrieval', {}).get('kg_path')
+    if kg_path and os.path.exists(kg_path):
+        print(f"[Run] Loading Local KG from: {kg_path}")
+        from crag.graph.local import LocalKnowledgeGraph
+        kg = LocalKnowledgeGraph(kg_path)
+    else:
+        print("[Run] Using Default Wikidata KG")
+        kg = WikidataKG()
+
     vs = FaissVectorStore()
     
     # Try to load pre-built vectorstore
@@ -93,25 +101,29 @@ def main():
     else:
         print(f"-> Mode: C-RAG Agent (Full/Ablated)")
         # Parse Agent Config
-        agent_cfg = cfg.get('agent', {})
+        agent_cfg_dict = cfg.get('agent', {})
         retrieval_cfg = cfg.get('retrieval', {})
+        
+        from crag.agent.state import AgentConfig
+        agent_config = AgentConfig(
+            max_steps=agent_cfg_dict.get('max_hops', 3),
+            max_expansions=agent_cfg_dict.get('max_expansions', 3),
+            use_reranker=retrieval_cfg.get('use_reranker', True)
+        )
         
         agent = CognitiveRetrievalAgent(
             hrm, 
             reranker, 
             llm_client=llm,
-            use_reranker=retrieval_cfg.get('use_reranker', True)
+            config=agent_config
         )
-        # Apply other agent config settings if class supports them
-        agent.max_steps = agent_cfg.get('max_hops', 3)
-        agent.max_expansions = agent_cfg.get('max_expansions', 3)
         
         # Wrapper to extract 'answer' from ReasoningState
         def agent_wrapper(query):
             state = agent.solve(query)
             return {
                 "answer": state.final_answer if state.final_answer else "No answer found",
-                "path": state.trajectory,
+                "path": state.path,
                 "final_answer": state.final_answer,
                 "termination_reason": state.termination_reason
             }
