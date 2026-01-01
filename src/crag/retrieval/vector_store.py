@@ -18,9 +18,15 @@ class FaissVectorStore(VectorStore):
     Uses 'sentence-transformers/all-MiniLM-L6-v2' for real embeddings.
     """
     def __init__(self, embedding_dim: int = 384): # 384 is dimension for all-MiniLM-L6-v2
-        import faiss
-        from sentence_transformers import SentenceTransformer
-        
+        try:
+            import faiss
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            print(f"[WARN] FAISS or SentenceTransformer not installed: {e}")
+            self.index = None
+            self.encoder = None
+            return
+
         self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
         self.embedding_dim = embedding_dim
         self.index = faiss.IndexFlatL2(embedding_dim)
@@ -28,19 +34,26 @@ class FaissVectorStore(VectorStore):
         self.documents = [] # Metadata store
         
     def add_texts(self, texts: List[str], metadatas: List[Dict] = None):
+        if self.index is None:
+            print("[WARN] FAISS index not initialized. Skipping add_texts.")
+            return
+
         if not metadatas:
             metadatas = [{}] * len(texts)
         
         # Batch encoding for efficiency
         embeddings = self.encoder.encode(texts, convert_to_numpy=True)
         
-        import faiss
         self.index.add(embeddings)
         
         for i, text in enumerate(texts):
             self.documents.append({"text": text, "metadata": metadatas[i]})
             
     def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
+        if self.index is None:
+            print("[WARN] FAISS index not initialized. Returning empty search results.")
+            return []
+
         query_vec = self.encoder.encode([query], convert_to_numpy=True)
         
         D, I = self.index.search(query_vec, k)

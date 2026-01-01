@@ -15,8 +15,13 @@ from ..llm.interface import OllamaClient, MockLLMClient
 app = FastAPI(title="C-RAG API", description="Cognitive Graph-RAG Reasoning Service", version="1.0.0")
 
 # Global instances (simplified for demo)
+# Global instances (simplified for demo)
 kg = WikidataKG()
-vs = FaissVectorStore()
+try:
+    vs = FaissVectorStore()
+except Exception:
+    vs = None
+
 hrm = HybridRetrievalModule(kg, vs)
 reranker = ColBERTReranker()
 llm = MockLLMClient() # Default to mock for safety, env var can switch to OllamaClient
