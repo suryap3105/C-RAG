@@ -1,0 +1,68 @@
+# C-RAG V3: Neuro-Symbolic Knowledge Graph Retrieval
+# Default Configuration
+
+# Graph Configuration
+graph:
+  nodes_path: null  # Path to nodes.jsonl
+  edges_path: null  # Path to edges.jsonl
+  
+# Partitioning
+partitioning:
+  enabled: true
+  method: metis  # metis, leiden, spectral
+  n_partitions: 10
+  
+# Vector Store
+vector_store:
+  embedding_dim: 768
+  index_type: Flat  # Flat, IVF
+  load_path: null
+  
+# ColBERT Router
+colbert_router:
+  tokens_per_partition: 32
+  load_path: null
+  
+# GNN Neural Matcher
+gnn:
+  in_channels: 768
+  hidden_channels: 256
+  out_channels: 256
+  num_gat_layers: 2
+  num_gin_layers: 4
+  dropout: 0.1
+  checkpoint_path: null
+  
+# LLM for Query Graph Generation
+llm:
+  provider: mock  # mock, ollama, openai, anthropic
+  model: llama3.2
+  base_url: http://localhost:11434
+  temperature: 0.7
+  max_tokens: 1024
+  
+# Retrieval Settings
+retrieval:
+  use_adaptive_gating: true
+  default_alpha: 0.5
+  use_reranking: true
+  
+# Reranking
+reranker:
+  cross_encoder_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  cross_encoder_cutoff: 20
+  
+# Training
+training:
+  epochs: 100
+  batch_size: 32
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  num_negatives: 5
+  temperature: 0.07
+  checkpoint_dir: checkpoints
+  
+# Evaluation
+evaluation:
+  k_values: [1, 5, 10]
+  output_dir: experiments

@@ -1,0 +1,76 @@
+# .gitignore for C-RAG V3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Data (EXCLUDE ALL LARGE FILES)
+data/
+!data/.gitkeep
+# If you want to track small example files, add them explicitly:
+# !data/small_example.jsonl
+
+# Models and Checkpoints (EXCLUDE ALL)
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+
+# Experiments and Logs
+experiments/
+logs/
+*.log
+benchmark_results/
+
+# Large File Extensions
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+*.h5
+*.npy
+*.npz
+*.joblib
+*.pkl
+
+# OS
+.DS_Store
+Thumbs.db
