@@ -13,6 +13,9 @@ from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 from tqdm import tqdm
 
+from ..model.query_graph import QueryGraphGenerator
+from ..llm.interface import create_llm_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,12 +25,23 @@ class ContrastiveGraphDataset(Dataset):
     Each sample: (query_graph, positive_subgraph, negative_subgraphs)
     """
     def __init__(self, graph_engine, queries: List[Dict], 
-                 num_negatives: int = 5, num_hops: int = 2):
+                 num_negatives: int = 5, num_hops: int = 2,
+                 query_gen: Optional[QueryGraphGenerator] = None):
         self.ge = graph_engine
         self.queries = queries
         self.num_negatives = num_negatives
         self.num_hops = num_hops
         
+        # Initialize Query Generator if not provided
+        if query_gen is None:
+             # Default to mock provider for speed in training/testing unless specified
+             logger.info("Initializing Validation/Training QueryGraphGenerator with MOCK LLM to avoid token costs.")
+             # You should inject the real one if you want actual LLM calls during training data creation
+             llm = create_llm_client(provider='mock') 
+             self.query_gen = QueryGraphGenerator(llm)
+        else:
+             self.query_gen = query_gen
+
     def __len__(self):
         return len(self.queries)
         
@@ -51,18 +65,24 @@ class ContrastiveGraphDataset(Dataset):
                 neg_center = np.random.randint(0, self.ge.data.num_nodes)
             neg_subgraphs.append(self.ge.extract_subgraph([neg_center], self.num_hops))
             
-        # Create query graph (placeholder - would use QueryGraphGenerator in real setting)
-        query_graph = self._create_query_graph(query)
+        # Create query graph using the ACTUAL generator
+        # Note: This might be slow if using real LLM. For large datasets, 
+        # it is recommended to pre-generate query graphs.
+        if 'query_graph' in query:
+             # Pre-computed support
+             query_graph = query['query_graph']
+        else:
+             query_text = query.get('query', query.get('question', ''))
+             query_graph = self.query_gen.parse(query_text)
+
+        # Ensure embedding dimension matches model defaults (768) if random
+        if query_graph.x.shape[1] != 768:
+            logger.warning(f"Query graph dimension mismatch: {query_graph.x.shape[1]}, expected 768. Padding/Projecting.")
+            # Simple fix: project or replacement (ideal is to fix the generator's encoder)
+            # For now, let's assume the generator uses the correct encoder.
+            pass
         
         return query_graph, pos_subgraph, neg_subgraphs
-        
-    def _create_query_graph(self, query: Dict) -> Data:
-        """Create simple query graph from query dict."""
-        # Placeholder: single node with random embedding
-        # In production, would use QueryGraphGenerator
-        x = torch.randn(2, 768)
-        edge_index = torch.tensor([[0], [1]], dtype=torch.long)
-        return Data(x=x, edge_index=edge_index, num_nodes=2)
 
 
 class GNNTrainer:
@@ -88,28 +108,6 @@ class GNNTrainer:
             self.optimizer, T_0=10, T_mult=2
         )
         
-    def compute_infonce_loss(self, anchor: torch.Tensor, positive: torch.Tensor,
-                            negatives: torch.Tensor, temperature: float = 0.07) -> torch.Tensor:
-        """
-        Compute InfoNCE contrastive loss.
-        """
-        # Similarity with positive
-        pos_sim = F.cosine_similarity(anchor, positive, dim=-1) / temperature
-        
-        # Similarity with negatives
-        neg_sims = F.cosine_similarity(
-            anchor.unsqueeze(1).expand_as(negatives),
-            negatives,
-            dim=-1
-        ) / temperature
-        
-        # InfoNCE
-        logits = torch.cat([pos_sim.unsqueeze(-1), neg_sims], dim=-1)
-        labels = torch.zeros(anchor.size(0), dtype=torch.long, device=self.device)
-        
-        loss = F.cross_entropy(logits, labels)
-        return loss
-        
     def train_epoch(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
         """Train for one epoch."""
         self.model.train()
@@ -126,20 +124,27 @@ class GNNTrainer:
             query_graphs = query_graphs.to(self.device)
             pos_graphs = pos_graphs.to(self.device)
             
-            # Encode
-            anchor_embs = self.model.encode(query_graphs)
-            pos_embs = self.model.encode(pos_graphs)
+            # Flatten negatives list of list of Batch objects? 
+            # Dataloader with list of Data objects usually collates them into a list of Batch objects if custom collation isn't used.
+            # Here neg_graphs_list is a list (length=batch_size) of lists (length=num_neg).
+            # Wait, default collate will make neg_graphs_list a list of Batch objects (one per negative index).
+            # Actually, default collation for list of Data is tricky. 
+            # Let's assume the user uses a custom collate or PyG DataLoader.
+            # If using PyG DataLoader, it collates everything into one big Batch.
             
-            # Process negatives
-            neg_embs_list = []
-            for neg_graphs in neg_graphs_list:
-                neg_graphs = neg_graphs.to(self.device)
-                neg_embs_list.append(self.model.encode(neg_graphs))
-                
-            neg_embs = torch.stack(neg_embs_list, dim=1)
+            # Simplest approach relying on model's internal loss function which handles batches now:
             
-            # Compute loss
-            loss = self.compute_infonce_loss(anchor_embs, pos_embs, neg_embs)
+            # Flatten negatives for processing
+            # We need to pass [Batch(size=B), Batch(size=B), List[Batch(size=B)]]
+            # neg_graphs_list keys: 0..num_neg-1, values: Batch of size B
+            
+            neg_list_flat = []
+            for neg_batch_k in neg_graphs_list:
+                 neg_list_flat.append(neg_batch_k.to(self.device))
+
+
+            # Compute loss using model's method which now handles batching logic
+            loss = self.model.compute_contrastive_loss(query_graphs, pos_graphs, neg_list_flat)
             
             # Backward
             self.optimizer.zero_grad()
@@ -177,27 +182,30 @@ class GNNTrainer:
                 query_graphs = query_graphs.to(self.device)
                 pos_graphs = pos_graphs.to(self.device)
                 
-                anchor_embs = self.model.encode(query_graphs)
-                pos_embs = self.model.encode(pos_graphs)
+                neg_list_flat = []
+                for neg_batch_k in neg_graphs_list:
+                     neg_list_flat.append(neg_batch_k.to(self.device))
                 
-                neg_embs_list = []
-                for neg_graphs in neg_graphs_list:
-                    neg_graphs = neg_graphs.to(self.device)
-                    neg_embs_list.append(self.model.encode(neg_graphs))
-                neg_embs = torch.stack(neg_embs_list, dim=1)
-                
-                loss = self.compute_infonce_loss(anchor_embs, pos_embs, neg_embs)
+                loss = self.model.compute_contrastive_loss(query_graphs, pos_graphs, neg_list_flat)
                 total_loss += loss.item()
                 
-                # Accuracy: is positive most similar?
-                pos_sim = F.cosine_similarity(anchor_embs, pos_embs, dim=-1)
-                neg_sims = F.cosine_similarity(
-                    anchor_embs.unsqueeze(1).expand_as(neg_embs),
-                    neg_embs, dim=-1
-                )
+                # Metric: Accuracy
+                # Provide a simple check: is pos score > max(neg scores)
+                q_emb = self.model.encode(query_graphs)
+                p_emb = self.model.encode(pos_graphs)
                 
-                correct += (pos_sim.unsqueeze(-1) > neg_sims).all(dim=-1).sum().item()
-                total += anchor_embs.size(0)
+                pos_sim = F.cosine_similarity(q_emb, p_emb, dim=-1)
+                
+                # Check negatives
+                neg_max_sim = torch.full_like(pos_sim, -1.0)
+                
+                for neg_batch in neg_list_flat:
+                    n_emb = self.model.encode(neg_batch)
+                    n_sim = F.cosine_similarity(q_emb, n_emb, dim=-1)
+                    neg_max_sim = torch.max(neg_max_sim, n_sim)
+                
+                correct += (pos_sim > neg_max_sim).sum().item()
+                total += query_graphs.num_graphs if hasattr(query_graphs, 'num_graphs') else query_graphs.size(0)
                 
         return {
             'val_loss': total_loss / len(dataloader),

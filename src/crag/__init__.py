@@ -7,7 +7,7 @@ __version__ = "3.0.0"
 __author__ = "C-RAG Team"
 
 from .graph.engine import GraphEngine
-from .graph.partitioning import GraphPartitioner
+from .graph.partitioning import SemanticPartitioner
 from .retrieval.vector_store import FaissVectorStore
 from .retrieval.neural_hybrid import NeuroHybridRetrievalModule
 from .routing.colbert import ColBERTPartitionRouter
@@ -20,7 +20,7 @@ from .evaluation.robustness import GraphMuddier
 
 __all__ = [
     'GraphEngine',
-    'GraphPartitioner',
+    'SemanticPartitioner',
     'FaissVectorStore',
     'NeuroHybridRetrievalModule',
     'ColBERTPartitionRouter',

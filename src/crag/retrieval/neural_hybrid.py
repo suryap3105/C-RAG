@@ -171,7 +171,7 @@ class NeuroHybridRetrievalModule:
             query_graph = query_graph.to(self.device)
             
             # 2. Route to relevant partitions
-            partition_ids, partition_scores = self.colbert_router.route(query, k=5)
+            partition_ids, partition_scores = self.colbert_router.route(query, query_graph=query_graph, k=5)
             
             # 3. Extract subgraphs from partitions
             candidates = []

@@ -1,173 +1,166 @@
 """
-C-RAG V3 Production Graph Partitioner
-METIS + Leiden + Spectral Partitioning
+C-RAG V3 Semantic Partitioner
+Separates Knowledge Graph into coherent semantic clusters.
 """
 import torch
-import numpy as np
 import logging
-from typing import List, Dict, Tuple, Optional
-from pathlib import Path
+import networkx as nx
+from torch_geometric.data import Data
+from torch_geometric.utils import to_networkx
+from typing import Dict, List, Optional
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
-
-class GraphPartitioner:
+class SemanticPartitioner:
     """
-    Production Graph Partitioner.
-    Supports METIS, Leiden, and Spectral partitioning algorithms.
+    Partitions the Knowledge Graph into semantic communities.
+    Uses NetworkX community detection (Greedy Modularity).
     """
-    def __init__(self, method: str = "metis", n_partitions: int = 10):
-        self.method = method.lower()
-        self.n_partitions = n_partitions
+    def __init__(self, resolution: float = 1.0):
+        self.resolution = resolution
         
-    def partition(self, graph_engine) -> torch.Tensor:
+    def partition(self, data: Data) -> torch.Tensor:
         """
-        Partition the graph and assign partition IDs to nodes.
-        Returns partition assignment tensor.
+        Compute partitions for the graph with multiple failsafe strategies.
+        Returns:
+            part_id: Tensor of shape [num_nodes] with partition IDs.
         """
-        edge_index = graph_engine.data.edge_index
-        num_nodes = graph_engine.data.num_nodes
+        logger.info(f"Starting semantic partitioning for {data.num_nodes} nodes...")
         
-        logger.info(f"Partitioning {num_nodes} nodes into {self.n_partitions} partitions using {self.method}")
-        
-        if self.method == "metis":
-            part_ids = self._metis_partition(edge_index, num_nodes)
-        elif self.method == "leiden":
-            part_ids = self._leiden_partition(edge_index, num_nodes)
-        elif self.method == "spectral":
-            part_ids = self._spectral_partition(edge_index, num_nodes)
-        else:
-            # Random fallback
-            part_ids = torch.randint(0, self.n_partitions, (num_nodes,))
+        # Validate input
+        if data.num_nodes == 0:
+            logger.warning("Empty graph provided, returning empty partition tensor.")
+            return torch.tensor([], dtype=torch.long)
             
-        # Assign to graph
-        graph_engine.data.part_id = part_ids
+        if data.edge_index.size(1) == 0:
+            logger.warning("Graph has no edges. Assigning single partition.")
+            return torch.zeros(data.num_nodes, dtype=torch.long)
         
-        # Log distribution
-        unique, counts = torch.unique(part_ids, return_counts=True)
-        logger.info(f"Partition distribution: {dict(zip(unique.tolist(), counts.tolist()))}")
-        
-        return part_ids
-        
-    def _metis_partition(self, edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
-        """METIS-based graph partitioning."""
         try:
-            import pymetis
+            # Convert to NetworkX for community detection
+            G = to_networkx(data, to_undirected=True)
             
-            # Build adjacency list
-            adjacency = [[] for _ in range(num_nodes)]
-            src, dst = edge_index[0].tolist(), edge_index[1].tolist()
+            # Check if graph is disconnected
+            if not nx.is_connected(G):
+                logger.info("Graph is disconnected. Using connected components as base partitions.")
+                return self._partition_disconnected(G, data.num_nodes)
             
-            for s, d in zip(src, dst):
-                if s != d:  # No self-loops
-                    adjacency[s].append(d)
+            # Check if graph is large
+            if data.num_nodes > 10000:
+                logger.warning("Large graph detected. Using fast approximation.")
+                return self._partition_large_graph(G, data.num_nodes)
+            
+            # Standard partitioning
+            return self._partition_standard(G, data.num_nodes)
+            
+        except Exception as e:
+            logger.error(f"Partitioning failed: {e}. Using fallback strategy.")
+            return self._fallback_partition(data)
+    
+    def _partition_standard(self, G: nx.Graph, num_nodes: int) -> torch.Tensor:
+        """Standard partitioning using greedy modularity."""
+        try:
+            from networkx.algorithms.community import greedy_modularity_communities
+            
+            communities = greedy_modularity_communities(G, resolution=self.resolution)
+            
+            # Create partition tensor
+            part_id = torch.zeros(num_nodes, dtype=torch.long)
+            
+            for pid, community in enumerate(communities):
+                for node_idx in community:
+                    part_id[node_idx] = pid
                     
-            # Handle isolated nodes
-            for i in range(num_nodes):
-                if not adjacency[i]:
-                    # Connect to next node
-                    if i < num_nodes - 1:
-                        adjacency[i].append(i + 1)
-                        adjacency[i + 1].append(i)
-                        
-            # Run METIS
-            n_cuts, membership = pymetis.part_graph(self.n_partitions, adjacency=adjacency)
-            logger.info(f"METIS: {n_cuts} edge cuts")
+            num_communities = len(communities)
+            logger.info(f"Partitioning complete. Found {num_communities} communities.")
             
-            return torch.tensor(membership, dtype=torch.long)
+            return part_id
             
         except ImportError:
-            logger.warning("pymetis not installed. Falling back to random.")
-            return torch.randint(0, self.n_partitions, (num_nodes,))
-        except Exception as e:
-            logger.error(f"METIS error: {e}. Falling back to random.")
-            return torch.randint(0, self.n_partitions, (num_nodes,))
-            
-    def _leiden_partition(self, edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
-        """Leiden community detection."""
+            logger.warning("Greedy modularity not available. Using label propagation.")
+            return self._partition_label_propagation(G, num_nodes)
+    
+    def _partition_large_graph(self, G: nx.Graph, num_nodes: int) -> torch.Tensor:
+        """Fast partitioning for large graphs using label propagation."""
+        return self._partition_label_propagation(G, num_nodes)
+    
+    def _partition_label_propagation(self, G: nx.Graph, num_nodes: int) -> torch.Tensor:
+        """Partition using label propagation algorithm (faster)."""
         try:
-            import igraph as ig
-            import leidenalg
+            from networkx.algorithms.community import label_propagation_communities
             
-            # Build igraph
-            edges = list(zip(edge_index[0].tolist(), edge_index[1].tolist()))
-            g = ig.Graph(n=num_nodes, edges=edges, directed=False)
+            communities = list(label_propagation_communities(G))
             
-            # Run Leiden
-            partition = leidenalg.find_partition(
-                g, 
-                leidenalg.ModularityVertexPartition,
-                n_iterations=10
-            )
+            part_id = torch.zeros(num_nodes, dtype=torch.long)
+            for pid, community in enumerate(communities):
+                for node_idx in community:
+                    part_id[node_idx] = pid
+                    
+            logger.info(f"Label propagation complete. Found {len(communities)} communities.")
+            return part_id
             
-            membership = partition.membership
-            
-            # Map to fixed number of partitions
-            unique_parts = list(set(membership))
-            if len(unique_parts) > self.n_partitions:
-                # Merge small partitions
-                part_map = {p: i % self.n_partitions for i, p in enumerate(unique_parts)}
-                membership = [part_map[m] for m in membership]
+        except Exception as e:
+            logger.error(f"Label propagation failed: {e}")
+            raise
+    
+    def _partition_disconnected(self, G: nx.Graph, num_nodes: int) -> torch.Tensor:
+        """Handle disconnected graphs by using connected components."""
+        part_id = torch.zeros(num_nodes, dtype=torch.long)
+        
+        for pid, component in enumerate(nx.connected_components(G)):
+            for node_idx in component:
+                part_id[node_idx] = pid
                 
-            return torch.tensor(membership, dtype=torch.long)
+        logger.info(f"Partitioned disconnected graph into {pid + 1} components.")
+        return part_id
+    
+    def _fallback_partition(self, data: Data) -> torch.Tensor:
+        """Ultimate fallback: degree-based partitioning."""
+        logger.warning("Using degree-based fallback partitioning.")
+        
+        # Calculate node degrees
+        edge_index = data.edge_index
+        degrees = torch.zeros(data.num_nodes, dtype=torch.long)
+        
+        for i in range(edge_index.size(1)):
+            degrees[edge_index[0, i]] += 1
             
-        except ImportError:
-            logger.warning("leidenalg not installed. Falling back to spectral.")
-            return self._spectral_partition(edge_index, num_nodes)
+        # Create 5 partitions based on degree quantiles
+        if data.num_nodes < 5:
+            return torch.arange(data.num_nodes, dtype=torch.long)
             
-    def _spectral_partition(self, edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
-        """Spectral clustering partition."""
-        try:
-            from sklearn.cluster import SpectralClustering
-            from scipy.sparse import csr_matrix
+        sorted_indices = torch.argsort(degrees)
+        part_id = torch.zeros(data.num_nodes, dtype=torch.long)
+        
+        chunk_size = data.num_nodes // 5
+        for i in range(5):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size if i < 4 else data.num_nodes
+            part_id[sorted_indices[start:end]] = i
             
-            # Build sparse adjacency
-            src, dst = edge_index[0].numpy(), edge_index[1].numpy()
-            data = np.ones(len(src))
-            adj = csr_matrix((data, (src, dst)), shape=(num_nodes, num_nodes))
-            adj = adj + adj.T  # Symmetrize
-            adj = (adj > 0).astype(float)
+        logger.info("Fallback partitioning complete with 5 degree-based partitions.")
+        return part_id
             
-            # Run spectral clustering
-            clustering = SpectralClustering(
-                n_clusters=self.n_partitions,
-                affinity='precomputed',
-                random_state=42,
-                n_init=10
-            )
-            labels = clustering.fit_predict(adj.toarray())
-            
-            return torch.tensor(labels, dtype=torch.long)
-            
-        except Exception as e:
-            logger.warning(f"Spectral clustering failed: {e}. Using random.")
-            return torch.randint(0, self.n_partitions, (num_nodes,))
-            
-    def compute_partition_quality(self, graph_engine) -> Dict[str, float]:
+    def compute_partition_centers(self, data: Data, part_id: torch.Tensor) -> torch.Tensor:
         """
-        Compute partition quality metrics.
+        Compute centroid embeddings for each partition.
         """
-        if not hasattr(graph_engine.data, 'part_id'):
-            return {}
+        if data.x is None:
+            logger.warning("No node embeddings found. Cannot compute partition centers.")
+            return None
             
-        part_ids = graph_engine.data.part_id
-        edge_index = graph_engine.data.edge_index
+        num_partitions = int(part_id.max().item()) + 1
+        hidden_dim = data.x.size(1)
         
-        # Edge cut ratio
-        src_parts = part_ids[edge_index[0]]
-        dst_parts = part_ids[edge_index[1]]
-        cut_edges = (src_parts != dst_parts).sum().item()
-        total_edges = edge_index.size(1)
-        cut_ratio = cut_edges / total_edges if total_edges > 0 else 0
+        centers = torch.zeros(num_partitions, hidden_dim, device=data.x.device)
         
-        # Balance (std of partition sizes)
-        unique, counts = torch.unique(part_ids, return_counts=True)
-        balance_std = counts.float().std().item()
-        balance_mean = counts.float().mean().item()
-        balance_score = 1 - (balance_std / balance_mean) if balance_mean > 0 else 0
+        for pid in range(num_partitions):
+            mask = (part_id == pid)
+            if mask.sum() > 0:
+                centers[pid] = data.x[mask].mean(dim=0)
+                
+        # Normalize
+        centers = torch.nn.functional.normalize(centers, p=2, dim=-1)
         
-        return {
-            'cut_ratio': cut_ratio,
-            'balance_score': balance_score,
-            'num_partitions': len(unique)
-        }
+        return centers

@@ -26,37 +26,38 @@ class MultiHeadGATEncoder(nn.Module):
         
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
+        self.skips = nn.ModuleList() # Residual projections per layer
+        
+        # Dimensions check
+        head_dim = hidden_channels // heads if hidden_channels % heads == 0 else hidden_channels
         
         # First layer
-        self.convs.append(GATConv(in_channels, hidden_channels, heads=heads, concat=True, dropout=dropout))
-        self.norms.append(nn.LayerNorm(hidden_channels * heads))
+        self.convs.append(GATConv(in_channels, head_dim, heads=heads, concat=True, dropout=dropout))
+        self.norms.append(nn.LayerNorm(head_dim * heads))
+        self.skips.append(nn.Linear(in_channels, head_dim * heads) if in_channels != head_dim * heads else nn.Identity())
         
         # Hidden layers
         for _ in range(num_layers - 2):
-            self.convs.append(GATConv(hidden_channels * heads, hidden_channels, heads=heads, concat=True, dropout=dropout))
-            self.norms.append(nn.LayerNorm(hidden_channels * heads))
+            self.convs.append(GATConv(head_dim * heads, head_dim, heads=heads, concat=True, dropout=dropout))
+            self.norms.append(nn.LayerNorm(head_dim * heads))
+            self.skips.append(nn.Identity()) # Same dim
             
         # Output layer
-        self.convs.append(GATConv(hidden_channels * heads, out_channels, heads=1, concat=False, dropout=dropout))
+        self.convs.append(GATConv(head_dim * heads, out_channels, heads=1, concat=False, dropout=dropout))
         self.norms.append(nn.LayerNorm(out_channels))
-        
-        # Residual projection if dimensions mismatch
-        self.residual_proj = nn.Linear(in_channels, out_channels) if in_channels != out_channels else None
+        self.skips.append(nn.Linear(head_dim * heads, out_channels) if head_dim * heads != out_channels else nn.Identity())
         
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        residual = x
         
-        for i, (conv, norm) in enumerate(zip(self.convs, self.norms)):
+        for i, (conv, norm, skip) in enumerate(zip(self.convs, self.norms, self.skips)):
+            x_in = x
             x = conv(x, edge_index)
             x = norm(x)
             x = F.elu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
             
-        # Residual connection
-        if self.residual_proj is not None:
-            residual = self.residual_proj(residual)
-        if x.shape == residual.shape:
-            x = x + residual
+            # Residual connection
+            x = x + skip(x_in)
             
         return x
 
@@ -141,7 +142,7 @@ class NeuralSubgraphMatcher(nn.Module):
                  num_gin_layers: int = 4, dropout: float = 0.1):
         super().__init__()
         
-        # Input projection
+        # Input projection to ensure dimension match
         self.input_proj = nn.Linear(in_channels, hidden_channels)
         
         # GAT for local attention
@@ -165,13 +166,6 @@ class NeuralSubgraphMatcher(nn.Module):
             nn.LayerNorm(out_channels)
         )
         
-        # Matching head (for training)
-        self.match_head = nn.Sequential(
-            nn.Linear(out_channels * 2, out_channels),
-            nn.ReLU(),
-            nn.Linear(out_channels, 1)
-        )
-        
         logger.info(f"NeuralSubgraphMatcher initialized: in={in_channels}, hidden={hidden_channels}, out={out_channels}")
         
     def encode(self, data: Data) -> torch.Tensor:
@@ -184,6 +178,11 @@ class NeuralSubgraphMatcher(nn.Module):
         else:
             batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
             
+        # Ensure input features are present and correct dimension
+        if x is None:
+             # Fallback if no features
+             x = torch.zeros((batch.size(0), self.input_proj.in_features), device=data.edge_index.device)
+
         # Input projection
         x = self.input_proj(x)
         
@@ -239,34 +238,55 @@ class NeuralSubgraphMatcher(nn.Module):
         """
         InfoNCE contrastive loss for training.
         """
+        # Encode all graphs
         anchor_emb = self.encode(anchor)
         pos_emb = self.encode(positive)
         
+        # Batch negatives efficiently
         neg_batch = Batch.from_data_list(negatives)
-        neg_embs = self.encode(neg_batch)
+        neg_emb = self.encode(neg_batch)
         
-        # Positive similarity
+        # Ensure dimensions match for broadcast
+        # anchor: [batch, dim]
+        # pos: [batch, dim]
+        # neg: [batch * num_neg, dim] if singular batch, or [batch, num_neg, dim] if handled carefully
+        # Here we assume standard training loop passes single items or batches.
+        # But if standard training loop passes BATCHES, then anchor is (B, D).
+        # We need to compute similarity properly.
+        
+        # Case 1: Single sample (inference-like)
+        if anchor_emb.dim() == 1:
+            anchor_emb = anchor_emb.unsqueeze(0)
+            pos_emb = pos_emb.unsqueeze(0)
+
+        # Batch Size
+        B = anchor_emb.size(0)
+        
+        # Positive similarity: (B,)
         pos_sim = F.cosine_similarity(anchor_emb, pos_emb, dim=-1) / temperature
         
-        # Negative similarities
-        neg_sims = F.cosine_similarity(anchor_emb.expand_as(neg_embs), neg_embs, dim=-1) / temperature
+        # Negative similarity
+        # If neg_emb is huge batch (B * K), we need to reshape or mask
+        # Assuming neg_batch is B*K stacked
+        K = len(negatives) // B if B > 0 else len(negatives)
         
-        # InfoNCE
-        logits = torch.cat([pos_sim.unsqueeze(0), neg_sims])
-        labels = torch.zeros(1, dtype=torch.long, device=anchor_emb.device)
+        # Reshape negatives to (B, K, D) if perfectly aligned
+        if neg_emb.size(0) == B * K:
+            neg_emb = neg_emb.view(B, K, -1)
+            # anchor: (B, 1, D)
+            anchor_expanded = anchor_emb.unsqueeze(1)
+            # sim: (B, K)
+            neg_sims = F.cosine_similarity(anchor_expanded, neg_emb, dim=-1) / temperature
+        else:
+             # Fallback for mismatched batch sizes (shouldn't happen in strict training but safety first)
+             # Compute pairwise against ALL negatives
+             neg_sims = torch.mm(anchor_emb, neg_emb.t()) / temperature
         
-        loss = F.cross_entropy(logits.unsqueeze(0), labels)
+        # Logits: (B, 1 + K)
+        logits = torch.cat([pos_sim.unsqueeze(1), neg_sims], dim=1)
+        
+        # Labels: 0 (positive is first)
+        labels = torch.zeros(B, dtype=torch.long, device=anchor_emb.device)
+        
+        loss = F.cross_entropy(logits, labels)
         return loss
-
-
-class GATEncoder(nn.Module):
-    """Simpler GAT encoder for backward compatibility."""
-    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, heads: int = 4):
-        super().__init__()
-        self.conv1 = GATConv(in_channels, hidden_channels, heads=heads, concat=True)
-        self.conv2 = GATConv(hidden_channels * heads, out_channels, heads=1, concat=False)
-        
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        x = F.elu(self.conv1(x, edge_index))
-        x = self.conv2(x, edge_index)
-        return x

@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import copy
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 
 from ..graph.engine import GraphEngine

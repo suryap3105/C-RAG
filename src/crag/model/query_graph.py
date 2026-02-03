@@ -22,13 +22,42 @@ class QueryGraphSchema:
     
     @classmethod
     def default(cls) -> 'QueryGraphSchema':
+        """Generic default schema."""
         return cls(
-            node_types=['Person', 'Movie', 'Actor', 'Director', 'Company', 
-                       'Location', 'Date', 'Concept', 'Entity', '?'],
-            edge_types=['DIRECTED', 'ACTED_IN', 'PRODUCED', 'LOCATED_IN',
-                       'FOUNDED', 'WORKS_FOR', 'RELATED_TO', 'CONNECTED_TO',
-                       'PART_OF', 'HAS_PROPERTY']
+            node_types=['Entity', 'Concept', 'Person', 'Location', 'Organization', 'Event', 'Date', '?'],
+            edge_types=['RELATED_TO', 'CONNECTED_TO', 'PART_OF', 'IS_A', 'HAS_PROPERTY']
         )
+
+    @classmethod
+    def from_graph_engine(cls, graph_engine) -> 'QueryGraphSchema':
+        """Infer schema from GraphEngine data if available."""
+        # Simple inference from node_text_map if 'type' field exists
+        node_types = set(['?', 'Entity']) # Always include basic types
+        edge_types = set(['RELATED_TO'])
+        
+        # Scan a sample of nodes (limit to first 1000 for speed)
+        if hasattr(graph_engine, 'node_text_map'):
+             for i, (_, data) in enumerate(graph_engine.node_text_map.items()):
+                  if i > 1000: break
+                  if 'type' in data:
+                       node_types.add(data['type'])
+        
+        # Scan edge attributes if available
+        if hasattr(graph_engine, 'edge_attr_map'):
+             for i, (_, attr) in enumerate(graph_engine.edge_attr_map.items()):
+                  if i > 1000: break
+                  if 'relation' in attr:
+                       edge_types.add(attr['relation'])
+                  elif 'type' in attr:
+                       edge_types.add(attr['type'])
+
+        return cls(
+            node_types=sorted(list(node_types)),
+            edge_types=sorted(list(edge_types))
+        )
+
+# Alias for backwards compatibility
+GraphSchema = QueryGraphSchema
 
 
 class QueryGraphGenerator:
