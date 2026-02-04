@@ -1,92 +1,14 @@
 """
-C-RAG V3 Production Cross-Encoder Reranker
-Transformer-based Reranking with ColBERT Fallback
+C-RAG V3 Production ColBERT Reranker
+ColBERT-style late interaction reranker.
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import logging
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
-
-
-class CrossEncoderReranker:
-    """
-    Production Cross-Encoder Reranker.
-    Uses pretrained cross-encoder for high-precision reranking.
-    """
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", 
-                 device: str = None, max_length: int = 512):
-        self.model_name = model_name
-        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        self.max_length = max_length
-        self._model = None
-        
-    def _load_model(self):
-        if self._model is None:
-            try:
-                from sentence_transformers import CrossEncoder
-                logger.info(f"Loading CrossEncoder: {self.model_name}")
-                self._model = CrossEncoder(self.model_name, device=self.device, max_length=self.max_length)
-            except ImportError:
-                logger.warning("sentence-transformers not found. Using fallback scoring.")
-                self._model = "FALLBACK"
-                
-    def score(self, query: str, documents: List[str]) -> List[float]:
-        """
-        Score query-document pairs.
-        Returns list of relevance scores.
-        """
-        self._load_model()
-        
-        if not documents:
-            return []
-            
-        if self._model == "FALLBACK":
-            # Length-based heuristic fallback
-            return [len(doc) / 1000.0 for doc in documents]
-            
-        pairs = [[query, doc] for doc in documents]
-        scores = self._model.predict(pairs, show_progress_bar=False)
-        
-        if not isinstance(scores, list):
-            scores = scores.tolist()
-            
-        return scores
-        
-    def rerank(self, query: str, candidates: List[Dict[str, Any]], 
-               top_k: int = 10, text_key: str = 'text') -> List[Dict[str, Any]]:
-        """
-        Rerank candidates by cross-encoder score.
-        
-        Args:
-            query: Query string
-            candidates: List of candidate dicts with 'text' field
-            top_k: Number of top results to return
-            text_key: Key for text in candidate dict
-            
-        Returns:
-            Reranked candidates with added 'rerank_score' field
-        """
-        if not candidates:
-            return []
-            
-        documents = [c.get(text_key, '') for c in candidates]
-        scores = self.score(query, documents)
-        
-        # Pair with original candidates
-        scored = list(zip(candidates, scores))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        
-        # Add scores and return top-k
-        results = []
-        for cand, score in scored[:top_k]:
-            cand = cand.copy()
-            cand['rerank_score'] = float(score)
-            results.append(cand)
-            
-        return results
 
 
 class ColBERTReranker(nn.Module):
@@ -169,34 +91,5 @@ class ColBERTReranker(nn.Module):
             
         return results
 
-
-class HybridReranker:
-    """
-    Combines Cross-Encoder and ColBERT for adaptive reranking.
-    Uses ColBERT for initial filtering, Cross-Encoder for final precision.
-    """
-    def __init__(self, cross_encoder_cutoff: int = 20, device: str = None):
-        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        self.cross_encoder_cutoff = cross_encoder_cutoff
-        
-        self.colbert = ColBERTReranker(device=self.device)
-        self.cross_encoder = CrossEncoderReranker(device=self.device)
-        
-    def rerank(self, query: str, candidates: List[Dict[str, Any]], 
-               top_k: int = 10, text_key: str = 'text') -> List[Dict[str, Any]]:
-        """
-        Two-stage reranking:
-        1. ColBERT filters to top cross_encoder_cutoff
-        2. Cross-encoder reranks for final top_k
-        """
-        if len(candidates) <= self.cross_encoder_cutoff:
-            # Small enough for direct cross-encoder
-            return self.cross_encoder.rerank(query, candidates, top_k, text_key)
-            
-        # Stage 1: ColBERT filtering
-        filtered = self.colbert.rerank(query, candidates, self.cross_encoder_cutoff, text_key)
-        
-        # Stage 2: Cross-encoder precision
-        final = self.cross_encoder.rerank(query, filtered, top_k, text_key)
-        
-        return final
+# Alias for backwards compatibility if needed, though we prefer direct usage
+HybridReranker = ColBERTReranker

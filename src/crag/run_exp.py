@@ -26,7 +26,7 @@ from crag.retrieval.neural_hybrid import NeuroHybridRetrievalModule
 from crag.routing.colbert import ColBERTPartitionRouter
 from crag.model.gnn import NeuralSubgraphMatcher
 from crag.model.query_graph import QueryGraphGenerator
-from crag.model.cross_encoder import HybridReranker
+from crag.model.cross_encoder import ColBERTReranker
 from crag.llm.interface import create_llm_client
 from crag.evaluation.experiment_manager import ExperimentManager
 from crag.evaluation.robustness import GraphMuddier
@@ -136,7 +136,7 @@ def build_pipeline(config: dict, device: str = None) -> NeuroHybridRetrievalModu
     query_gen = QueryGraphGenerator(llm_client)
     
     # 7. Reranker
-    reranker = HybridReranker(device=device)
+    reranker = ColBERTReranker(device=device)
     
     # 8. Assemble Pipeline
     pipeline = NeuroHybridRetrievalModule(

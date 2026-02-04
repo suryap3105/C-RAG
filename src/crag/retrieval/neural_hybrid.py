@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .vector_store import FaissVectorStore
 from ..model.gnn import NeuralSubgraphMatcher
-from ..model.cross_encoder import HybridReranker
+from ..model.cross_encoder import ColBERTReranker
 from ..routing.colbert import ColBERTPartitionRouter
 from ..graph.engine import GraphEngine
 from ..model.query_graph import QueryGraphGenerator
@@ -71,7 +71,7 @@ class NeuroHybridRetrievalModule:
     - Adaptive gating for result fusion
     - Weighted Reciprocal Rank Fusion
     - Neural subgraph matching
-    - Hybrid reranking
+    - ColBERT reranking
     """
     def __init__(self, 
                  vector_store: FaissVectorStore,
@@ -79,7 +79,7 @@ class NeuroHybridRetrievalModule:
                  query_gen: QueryGraphGenerator,
                  neural_matcher: NeuralSubgraphMatcher,
                  colbert_router: ColBERTPartitionRouter,
-                 reranker: Optional[HybridReranker] = None,
+                 reranker: Optional[ColBERTReranker] = None,
                  use_adaptive_gating: bool = True,
                  device: str = None):
         
@@ -90,7 +90,7 @@ class NeuroHybridRetrievalModule:
         self.query_gen = query_gen
         self.neural_matcher = neural_matcher.to(self.device)
         self.colbert_router = colbert_router
-        self.reranker = reranker or HybridReranker(device=self.device)
+        self.reranker = reranker or ColBERTReranker(device=self.device)
         
         # Adaptive gating
         self.use_adaptive_gating = use_adaptive_gating

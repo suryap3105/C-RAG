@@ -13,7 +13,7 @@ from .retrieval.neural_hybrid import NeuroHybridRetrievalModule
 from .routing.colbert import ColBERTPartitionRouter
 from .model.gnn import NeuralSubgraphMatcher
 from .model.query_graph import QueryGraphGenerator
-from .model.cross_encoder import CrossEncoderReranker, HybridReranker
+from .model.cross_encoder import ColBERTReranker
 from .llm.interface import create_llm_client
 from .evaluation.experiment_manager import ExperimentManager
 from .evaluation.robustness import GraphMuddier
@@ -26,8 +26,7 @@ __all__ = [
     'ColBERTPartitionRouter',
     'NeuralSubgraphMatcher',
     'QueryGraphGenerator',
-    'CrossEncoderReranker',
-    'HybridReranker',
+    'ColBERTReranker',
     'create_llm_client',
     'ExperimentManager',
     'GraphMuddier',

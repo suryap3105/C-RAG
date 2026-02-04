@@ -21,7 +21,7 @@
 - Multi-provider LLM support (Ollama, OpenAI, Anthropic)
 - Comprehensive evaluation metrics (Recall, MRR, NDCG, F1)
 - Parallel retrieval with thread pooling
-- Hybrid reranking (ColBERT + Cross-Encoder)
+- **ColBERT Reranking**: Late-interaction scoring for high precision with InfoNCE contrastive learning
 - Full training pipeline with InfoNCE contrastive learning
 
 ## 🚀 Quick Start
@@ -124,9 +124,10 @@ Query → [Query Graph Generator] → Query Graph (G_Q)
         └─────────────────────→ [Adaptive Fusion] ←──────────────┘
                                   RRF + Gating
                                        ↓
-                              [Hybrid Reranker]
-                           ColBERT → Cross-Encoder
-                                       ↓
+                                        ↓
+                              [ColBERT Reranker]
+                            Late-Interaction MaxSim
+                                        ↓
                                   Final Results
 ```
 
@@ -177,6 +178,7 @@ noisy_graph = muddier.apply()
 | `NeuralSubgraphMatcher` | Structural matching | GAT, GIN, JK-Net |
 | `ColBERTPartitionRouter` | Partition selection | Late interaction, MaxSim |
 | `NeuroHybridRetrievalModule` | Fusion pipeline | Adaptive gating, RRF |
+| `ColBERTReranker` | Final result reranking | ColBERT MaxSim |
 | `QueryGraphGenerator` | NL→Graph parsing | LLM prompting, NER fallback |
 | `GraphPartitioner` | Graph partitioning | METIS, Leiden, Spectral |
 | `SimpleColBERTRouter` | Text-only partition selection | Pure ColBERT MaxSim (No Graph) |
