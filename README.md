@@ -13,6 +13,7 @@
 - **Late-Interaction ColBERT Routing**: MaxSim-based partition selection with learned token representations
 - **Adaptive Fusion**: Learned gating network dynamically balances vector and graph retrieval
 - **Query Graph Generation**: LLM-based natural language to graph structure parsing
+- **Simplified ColBERT Routing**: Text-only fallback for robust partition selection
 - **Adversarial Robustness**: Systematic noise injection for resilience testing
 
 ### Production-Ready
@@ -70,7 +71,23 @@ pipeline = NeuroHybridRetrievalModule(
 )
 
 # 5. Retrieve
+# 5. Retrieve
 results = pipeline.retrieve("Who directed Inception?", k=10)
+```
+
+### Simplified Usage (Text-Only Fallback)
+
+Use when structural graph parsing fails or for maximum speed:
+
+```python
+from crag.routing.colbert_simple import SimpleColBERTRouter
+
+# Initialize router (no metadata extraction needed)
+router = SimpleColBERTRouter(device='cuda')
+router.build_partition_matrices(graph_engine)
+
+# Route text query directly
+partitions, scores = router.route("Who directed Inception?", k=5)
 ```
 
 ## 📊 Command Line Interface
@@ -162,6 +179,7 @@ noisy_graph = muddier.apply()
 | `NeuroHybridRetrievalModule` | Fusion pipeline | Adaptive gating, RRF |
 | `QueryGraphGenerator` | NL→Graph parsing | LLM prompting, NER fallback |
 | `GraphPartitioner` | Graph partitioning | METIS, Leiden, Spectral |
+| `SimpleColBERTRouter` | Text-only partition selection | Pure ColBERT MaxSim (No Graph) |
 
 ## 🔧 Configuration
 
