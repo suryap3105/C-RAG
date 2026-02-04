@@ -26,7 +26,7 @@ class SimpleColBERTRouter:
     
     def __init__(self, partition_matrix_path: str = None, device: str = None):
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        self.encoder_name = 'sentence-transformers/all-MiniLM-L6-v2'
+        self.encoder_name = 'intfloat/e5-base-v2'
         
         # Partition data
         self.partition_embs = None  # [NumPartitions, MaxTokens, Hidden]

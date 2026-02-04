@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Test Simple ColBERT Router
-Compare performance vs FAISS with clean and muddied knowledge graphs.
+Compare performance vs FAISS with clean and noisy knowledge graphs.
+Uses E5 embeddings for token-level late interaction.
 """
 import sys
 import logging
